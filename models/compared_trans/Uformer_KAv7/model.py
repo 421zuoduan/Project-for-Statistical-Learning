@@ -399,9 +399,7 @@ class KernelAttention(nn.Module):
 
         self.num_layers = self.win_num
         self.convlayer = ConvLayer(dim, ka_win_num, kernel_size, stride, padding)
-        self.kernel_linear = nn.Conv2d(self.win_num*self.dim, self.dim, kernel_size=1, stride=1, padding=0)
-        self.fusion = nn.Conv2d((self.win_num+1)*self.dim, self.dim, kernel_size=1, stride=1, padding=0)
-
+        self.kernel_linear = nn.Conv2d(ka_win_num*self.dim, self.dim, kernel_size=1, stride=1, padding=0)
 
     def forward(self, x):
         """
@@ -424,35 +422,18 @@ class KernelAttention(nn.Module):
         # global_kernel:  c, c, k_size, k_size
         global_kernel = self.kernel_linear(kernels)
 
-        # kernels:  c, (win_num+1)*c, k_size, k_size
-        kernels = torch.cat([kernels, global_kernel], dim=1)
-
-        # kernels:  (win_num+1)*c, c, k_size, k_size
-        kernels = kernels.reshape(self.dim, self.win_num+1, self.dim, self.kernel_size, self.kernel_size).transpose(0, 1).reshape((self.win_num+1)*self.dim, self.dim, self.kernel_size, self.kernel_size)
-
 
         ### 卷积核与输入特征计算卷积
         # x:  bs, c, h, w
         x = x.reshape(B, H, W, C).permute(0, 3, 1, 2)
 
-        # x:  bs, (win_num+1)*c, h, w
-        x = x.repeat(1, self.win_num+1, 1, 1)
-
-        # x:  bs, (win_num+1)*c, h, w
-        x = F.conv2d(x, kernels, stride=self.stride, padding=self.padding, groups=self.win_num+1)
-
         # x:  bs, c, h, w
-        x = self.fusion(x)
+        x = F.conv2d(x, global_kernel, stride=self.stride, padding=self.padding)
 
         # x:  bs, h*w, c
         x = x.permute(0, 2, 3, 1).reshape(B, H*W, C)
 
         return x
-
-
-
-
-
 
 
 ########### window-based self-attention #############
@@ -813,13 +794,12 @@ class LeWinTransformerBlock_KA(nn.Module):
         assert 0 <= self.shift_size < self.window_size, "shift_size must in 0-window_size"
 
         self.norm1 = norm_layer(dim//2)
-        head_num = 1 if num_heads==1 else num_heads
         self.win_attn = WindowAttention(
-            dim//2, window_size=to_2tuple(self.window_size), num_heads=head_num,
+            dim//2, window_size=to_2tuple(self.window_size), num_heads=num_heads//2,
             qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop,
             token_projection=token_projection, se_layer=se_layer)
         
-        self.kernel_attn = KernelAttention(dim//2, input_resolution[0], num_heads=head_num, ka_win_num=16, kernel_size=3, stride=1, padding=1)
+        self.kernel_attn = KernelAttention(dim//2, input_resolution[0], num_heads=num_heads//2, ka_win_num=16, kernel_size=3, stride=1, padding=1)
 
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         self.norm2 = norm_layer(dim)
@@ -854,11 +834,41 @@ class LeWinTransformerBlock_KA(nn.Module):
         else:
             attn_mask = None
 
+        ## shift mask
+        if self.shift_size > 0:
+            # calculate attention mask for SW-MSA
+            shift_mask = torch.zeros((1, H, W, 1)).type_as(x)
+            h_slices = (slice(0, -self.window_size),
+                        slice(-self.window_size, -self.shift_size),
+                        slice(-self.shift_size, None))
+            w_slices = (slice(0, -self.window_size),
+                        slice(-self.window_size, -self.shift_size),
+                        slice(-self.shift_size, None))
+            cnt = 0
+            for h in h_slices:
+                for w in w_slices:
+                    shift_mask[:, h, w, :] = cnt
+                    cnt += 1
+            shift_mask_windows = window_partition(shift_mask, self.window_size)  # nW, window_size, window_size, 1
+            shift_mask_windows = shift_mask_windows.view(-1, self.window_size * self.window_size)  # nW, window_size*window_size
+            shift_attn_mask = shift_mask_windows.unsqueeze(1) - shift_mask_windows.unsqueeze(
+                2)  # nW, window_size*window_size, window_size*window_size
+            attn_mask = attn_mask or shift_attn_mask
+            attn_mask = attn_mask.masked_fill(shift_attn_mask != 0, float(-100.0))
+
+        
         x_wa = self.norm1(x_wa)
         x_wa = x_wa.view(B, H, W, C//2)
 
+        # cyclic shift
+        if self.shift_size > 0:
+            shifted_x_wa = torch.roll(x, shifts=(-self.shift_size, -self.shift_size), dims=(1, 2))
+        else:
+            shifted_x_wa = x_wa
+
+
         # partition windows
-        x_windows_wa = window_partition(x_wa, self.window_size)  # nW*B, window_size, window_size, C  N*C/2->C/2
+        x_windows_wa = window_partition(shifted_x_wa, self.window_size)  # nW*B, window_size, window_size, C  N*C/2->C/2
         x_windows_wa = x_windows_wa.view(-1, self.window_size * self.window_size, C//2)  # nW*B, window_size*window_size, C/2
 
         # W-MSA/SW-MSA
@@ -1371,7 +1381,7 @@ class BasicUformerLayer_KA(nn.Module):
                                 norm_layer=norm_layer, token_projection=token_projection, token_mlp=token_mlp,
                                 se_layer=se_layer),
 
-            LeWinTransformerBlock_KA(dim=dim, input_resolution=input_resolution,
+            LeWinTransformerBlock(dim=dim, input_resolution=input_resolution,
                                 num_heads=num_heads, window_size=window_size,
                                 shift_size=window_size // 2,
                                 mlp_ratio=mlp_ratio,
@@ -1522,7 +1532,7 @@ class Uformer(nn.Module):
         self.output_proj = OutputProj(in_channel=2 * embed_dim, out_channel=in_chans, kernel_size=3, stride=1)
 
         # Encoder
-        self.encoderlayer_0 = BasicUformerLayer_KA(dim=embed_dim,
+        self.encoderlayer_0 = BasicUformerLayer(dim=embed_dim,
                                                 output_dim=embed_dim,
                                                 input_resolution=(img_size,
                                                                   img_size),
@@ -1653,7 +1663,7 @@ class Uformer(nn.Module):
                                                 token_projection=token_projection, token_mlp=token_mlp,
                                                 se_layer=se_layer)
         self.upsample_3 = upsample(embed_dim * 4, embed_dim)
-        self.decoderlayer_3 = BasicUformerLayer_KA(dim=embed_dim * 2,
+        self.decoderlayer_3 = BasicUformerLayer(dim=embed_dim * 2,
                                                 output_dim=embed_dim * 2,
                                                 input_resolution=(img_size,
                                                                   img_size),

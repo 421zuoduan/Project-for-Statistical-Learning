@@ -42,7 +42,7 @@ class parser_args(TaskDispatcher, name='Uformer_KAv5'):
         parser.add_argument('--lr', default=1e-4, type=float)  # 1e-4 2e-4 8
         # parser.add_argument('--lr_backbone', default=1e-5, type=float)
         # parser.add_argument('--weight_decay', default=1e-4, type=float)
-        parser.add_argument('-samples_per_gpu', default=1, type=int, metavar='N', help='mini-batch size (default: 256)') #8
+        parser.add_argument('-samples_per_gpu', default=6, type=int, metavar='N', help='mini-batch size (default: 256)') #8
         parser.add_argument('--print-freq', '-p', default=10, type=int, metavar='N', help='print frequency (default: 10)')
         parser.add_argument('--seed', default=1, type=int, help='seed for initializing training. ')
         parser.add_argument('--device', default='cuda', help='device to use for training / testing')
@@ -53,7 +53,7 @@ class parser_args(TaskDispatcher, name='Uformer_KAv5'):
         parser.add_argument('--clip_max_norm', default=0, type=float, help='gradient clipping max norm')
 
         parser.add_argument('--patch_size', type=int, default=128, help='output patch size') #128
-        parser.add_argument('--dataset', default={'train': 'Rain100H', 'val': 'Rain100H'}, type=str,
+        parser.add_argument('--dataset', default={'train': 'Rain100L', 'val': 'Rain100L'}, type=str,
                             choices=[None, 'Rain200L', 'Rain100L', 'Rain200H', 'Rain100H',
                                      'test12', 'real', 'DID', 'SPA', 'DDN'],
                             help="performing evalution for patch2entire")

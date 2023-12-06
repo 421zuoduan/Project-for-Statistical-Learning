@@ -242,7 +242,8 @@ Our training framework : [Code](https://github.com/XiaoXiao-Woo/derain)
 |模型|PSNR|SSIM|Params|FLOPs|
 |-|-|-|-|-|
 |Uformer|38.76|0.97927|20.628M|10.308G|
-|Uformer_tinypaperv1|37.14941|0.97185|||
+|Uformer_tinypaperv2|38.00910|0.97563|||
+|Uformer_tinypaperv2|37.14941|0.97185|||
 <!-- |Uformer_tinypaperv1|38.67999|0.97879|||
 |Uformer_tinypaperv2|38.67999|0.97879||| -->
 

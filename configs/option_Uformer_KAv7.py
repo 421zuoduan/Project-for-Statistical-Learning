@@ -5,7 +5,7 @@ import argparse
 import platform
 import os
 
-class parser_args(TaskDispatcher, name='Uformer_KAv6'):
+class parser_args(TaskDispatcher, name='Uformer_KAv7'):
     def __init__(self, cfg=None):
         super(parser_args, self).__init__()
 
@@ -27,7 +27,7 @@ class parser_args(TaskDispatcher, name='Uformer_KAv6'):
 
         parser.add_argument('--out_dir', metavar='DIR', default='{}/results/{}'.format(root_dir, cfg.task), help='path to save model')
         parser.add_argument('--config', help='train config file path', default='')
-        parser.add_argument('--arch', '-a', metavar='ARCH', default='Uformer_KAv6')
+        parser.add_argument('--arch', '-a', metavar='ARCH', default='Uformer_KAv7')
 
         # * Backbone
         parser.add_argument('--backbone', default='resnet50', type=str, help="Name of the convolutional backbone to use")
@@ -111,7 +111,7 @@ class Options():
         parser.add_argument('--lr_initial', type=float, default=0.0005, help='initial learning rate')
         parser.add_argument('--weight_decay', type=float, default=0.02, help='weight decay')
         parser.add_argument('--gpu', type=str, default='0', help='GPUs')
-        parser.add_argument('--arch', type=str, default ='Uformer_KAv6',  help='archtechture')
+        parser.add_argument('--arch', type=str, default ='Uformer_KAv7',  help='archtechture')
         parser.add_argument('--mode', type=str, default ='deraining',  help='image restoration mode')#denoising
 
         # args for saving
