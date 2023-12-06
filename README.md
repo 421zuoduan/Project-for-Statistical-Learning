@@ -40,9 +40,10 @@ Our training framework : [Code](https://github.com/XiaoXiao-Woo/derain)
 * Uformer_KAv2：基于v1，更新了Kernel Attention的结构
 * Uformer_KAv3：
 * Uformer_KAv4：串行结构代码，窗口卷积+global kernel
-* Uformer_KAv5：使用并行结构代码
-* Uformer_KAv6：BasicUformerLayer层数增加
+* Uformer_KAv5：开始使用并行结构代码
+* Uformer_KAv6：BasicUformerLayer层数增加，只有LeWinTransformerBlock去除了shift window，LeWinTransformerBlock没有去除了shift window
 * Uformer_KAv7：只使用global kernel
+* Uformer_KAv8：BasicUformerLayer层数没有增加，LeWinTransformerBlock_KA和LeWinTransformerBlock都去除了shift window
 
 **Note**：Restormerv2和Restormerv3的代码应该有问题，在ConvLayer部分权重的维度变换有问题
 
@@ -247,8 +248,8 @@ Our training framework : [Code](https://github.com/XiaoXiao-Woo/derain)
 |模型|PSNR|SSIM|Params|FLOPs|
 |-|-|-|-|-|
 |Uformer|38.76|0.97927|20.628M|10.308G|
-|Uformer_tinypaperv2|38.00910|0.97563|||
-|Uformer_tinypaperv2|37.14941|0.97185|||
+|Uformer_tinypaperv1|38.00910|0.97563|||
+|Uformer_tinypaperv2|38.29627|0.97658|||
 <!-- |Uformer_tinypaperv1|38.67999|0.97879|||
 |Uformer_tinypaperv2|38.67999|0.97879||| -->
 

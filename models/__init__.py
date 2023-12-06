@@ -12,6 +12,7 @@ from .compared_trans.Uformer_KAv4.uformer_main import build_Uformer
 from .compared_trans.Uformer_KAv5.uformer_main import build_Uformer
 from .compared_trans.Uformer_KAv6.uformer_main import build_Uformer
 from .compared_trans.Uformer_KAv7.uformer_main import build_Uformer
+from .compared_trans.Uformer_KAv8.uformer_main import build_Uformer
 
 
 from .compared_trans.Uformer_tinypaperv1.uformer_main import build_Uformer
