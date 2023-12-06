@@ -38,6 +38,11 @@ Our training framework : [Code](https://github.com/XiaoXiao-Woo/derain)
 * Uformer_KAv1：加入了利用普通卷积的Kernel Attention，在feature map大小为64和32时（输入大小为128）与window_attention形成两个分支，分窗大小不变均为16；而且仅在未进行shift window attention时进行kernel attention
 
 * Uformer_KAv2：基于v1，更新了Kernel Attention的结构
+* Uformer_KAv3：
+* Uformer_KAv4：串行结构代码，窗口卷积+global kernel
+* Uformer_KAv5：使用并行结构代码
+* Uformer_KAv6：BasicUformerLayer层数增加
+* Uformer_KAv7：只使用global kernel
 
 **Note**：Restormerv2和Restormerv3的代码应该有问题，在ConvLayer部分权重的维度变换有问题
 
