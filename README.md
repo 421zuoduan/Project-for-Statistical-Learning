@@ -44,6 +44,7 @@ Our training framework : [Code](https://github.com/XiaoXiao-Woo/derain)
 * Uformer_KAv6：BasicUformerLayer层数增加，只有LeWinTransformerBlock去除了shift window，LeWinTransformerBlock没有去除了shift window
 * Uformer_KAv7：只使用global kernel
 * Uformer_KAv8：BasicUformerLayer层数没有增加，LeWinTransformerBlock_KA和LeWinTransformerBlock都去除了shift window
+* Uformer_KAv9：基于KAv7，去除了shift window
 
 **Note**：Restormerv2和Restormerv3的代码应该有问题，在ConvLayer部分权重的维度变换有问题
 
