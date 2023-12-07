@@ -5,7 +5,7 @@ import argparse
 import platform
 import os
 
-class parser_args(TaskDispatcher, name='Uformer_KAv9'):
+class parser_args(TaskDispatcher, name='Uformer_KAv10'):
     def __init__(self, cfg=None):
         super(parser_args, self).__init__()
 
@@ -16,18 +16,13 @@ class parser_args(TaskDispatcher, name='Uformer_KAv9'):
         script_path = os.path.dirname(os.path.dirname(__file__))
         root_dir = script_path.split('AutoDL')[0]
 
-        # model_path = f'results\\derain\\Rain100L\\Uformer_KAv1\\Test\\model_2023-10-05-02-13-33\\1000.pth.tar'
-        # model_path = f'results\\derain\\Rain100L\\Uformer_KAv2\\Test\\model_2023-10-10-00-16-47\\1000.pth.tar'
-        # model_path = 'results\\derain\\Rain100L\\Uformer_KAv3\\Test\\model_2023-10-17-22-38-20\\1000.pth.tar'
-        # model_path = 'results\\derain\\Rain100L\\Uformer_KAv4\\Test\\model_2023-10-21-10-19-38\\2000.pth.tar'
-        # model_path = r'results\derain\Rain100H\Uformer_KAv4\Test\model_2023-10-22-01-38-21\1000.pth.tar'
-        model_path = r'results\derain\Rain100L\Uformer_KAv9\Test\model_2023-12-07-00-17-47\1000.pth.tar'
+        model_path = r''
 
         parser = argparse.ArgumentParser(description='PyTorch Training')
 
         parser.add_argument('--out_dir', metavar='DIR', default='{}/results/{}'.format(root_dir, cfg.task), help='path to save model')
         parser.add_argument('--config', help='train config file path', default='')
-        parser.add_argument('--arch', '-a', metavar='ARCH', default='Uformer_KAv9')
+        parser.add_argument('--arch', '-a', metavar='ARCH', default='Uformer_KAv10')
 
         # * Backbone
         parser.add_argument('--backbone', default='resnet50', type=str, help="Name of the convolutional backbone to use")
@@ -46,7 +41,7 @@ class parser_args(TaskDispatcher, name='Uformer_KAv9'):
         parser.add_argument('--print-freq', '-p', default=10, type=int, metavar='N', help='print frequency (default: 10)')
         parser.add_argument('--seed', default=1, type=int, help='seed for initializing training. ')
         parser.add_argument('--device', default='cuda', help='device to use for training / testing')
-        parser.add_argument('--epochs', default=5000, type=int)
+        parser.add_argument('--epochs', default=1001, type=int)
         parser.add_argument('--workers_per_gpu', default=4, type=int)
         parser.add_argument('--resume_from', default=model_path, type=str, metavar='PATH', help='path to latest checkpoint (default: none)')
         parser.add_argument('--accumulated-step', default=1, type=int)
@@ -111,7 +106,7 @@ class Options():
         parser.add_argument('--lr_initial', type=float, default=0.0005, help='initial learning rate')
         parser.add_argument('--weight_decay', type=float, default=0.02, help='weight decay')
         parser.add_argument('--gpu', type=str, default='0', help='GPUs')
-        parser.add_argument('--arch', type=str, default ='Uformer_KAv9',  help='archtechture')
+        parser.add_argument('--arch', type=str, default ='Uformer_KAv10',  help='archtechture')
         parser.add_argument('--mode', type=str, default ='deraining',  help='image restoration mode')#denoising
 
         # args for saving

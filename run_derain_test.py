@@ -10,7 +10,7 @@ from UDL.AutoDL.trainer import main
 from common.builder import build_model, derainSession
 
 if __name__ == '__main__':
-    cfg = TaskDispatcher.new(task='derain', mode='entrypoint', arch='Uformer_tinypaperv2')
+    cfg = TaskDispatcher.new(task='derain', mode='entrypoint', arch='Uformer_KAv9')
     cfg.eval = True
     cfg.datasets = {"val": 'Rain100L'}
     print(TaskDispatcher._task.keys())

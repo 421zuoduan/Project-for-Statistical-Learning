@@ -249,12 +249,17 @@ Our training framework : [Code](https://github.com/XiaoXiao-Woo/derain)
 |模型|PSNR|SSIM|Params|FLOPs|
 |-|-|-|-|-|
 |Uformer|38.76|0.97927|20.628M|10.308G|
+|Uformer bs=12|37.87080|0.97472|20.628M|10.308G|
 |Uformer_tinypaperv1|38.00910|0.97563|||
 |Uformer_tinypaperv2|38.29627|0.97658|||
+|Uformer_KAv5|38.72450|0.97846|||
+|Uformer_KAv7|38.71809|0.97864|||
+|Uformer_KAv8|38.78743|0.97921|||
+|Uformer_KAv9|38.81705|0.97939|||
 <!-- |Uformer_tinypaperv1|38.67999|0.97879|||
 |Uformer_tinypaperv2|38.67999|0.97879||| -->
 
-
+ ssim: , psnr: 
 2000epoch情况下：
 
 |模型|PSNR|SSIM|Params|FLOPs|
