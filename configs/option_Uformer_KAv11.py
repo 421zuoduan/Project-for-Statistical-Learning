@@ -5,7 +5,7 @@ import argparse
 import platform
 import os
 
-class parser_args(TaskDispatcher, name='Uformer'):
+class parser_args(TaskDispatcher, name='Uformer_KAv11'):
     def __init__(self, cfg=None):
         super(parser_args, self).__init__()
 
@@ -16,28 +16,20 @@ class parser_args(TaskDispatcher, name='Uformer'):
         script_path = os.path.dirname(os.path.dirname(__file__))
         root_dir = script_path.split('AutoDL')[0]
 
-        # model_path = f'results\\derain\\Rain100L\\Uformer\\Test\\model_2023-10-19-01-11-57\\1000.pth.tar'
-        model_path = r'results\derain\Rain100L\Uformer\Test\model_2023-12-08-02-57-45\1000.pth.tar'
-        # model_path = f'{script_path}/results/Uformer/models/.pth'
+        model_path = r''
 
-        parser = argparse.ArgumentParser(description='PyTorch Training') 
-         
+        parser = argparse.ArgumentParser(description='PyTorch Training')
 
-        parser.add_argument('--out_dir', metavar='DIR', default='{}/results/{}'.format(root_dir, cfg.task),
-                            help='path to save model')
+        parser.add_argument('--out_dir', metavar='DIR', default='{}/results/{}'.format(root_dir, cfg.task), help='path to save model')
         parser.add_argument('--config', help='train config file path', default='')
-        parser.add_argument('--arch', '-a', metavar='ARCH', default='Uformer')
+        parser.add_argument('--arch', '-a', metavar='ARCH', default='Uformer_KAv11')
 
         # * Backbone
-        parser.add_argument('--backbone', default='resnet50', type=str,
-                            help="Name of the convolutional backbone to use")
-        parser.add_argument('--dilation', action='store_true',
-                            help="If true, we replace stride with dilation in the last convolutional block (DC5)")
-        parser.add_argument('--position_embedding', default='learned', type=str, choices=('sine', 'learned', 'None'),
-                            help="Type of positional embedding to use on top of the image features")
+        parser.add_argument('--backbone', default='resnet50', type=str, help="Name of the convolutional backbone to use")
+        parser.add_argument('--dilation', action='store_true', help="If true, we replace stride with dilation in the last convolutional block (DC5)")
+        parser.add_argument('--position_embedding', default='learned', type=str, choices=('sine', 'learned', 'None'), help="Type of positional embedding to use on top of the image features")
 
-        parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
-                            help='start epoch')
+        parser.add_argument('--start_epoch', default=0, type=int, metavar='N', help='start epoch')
 
         ## Train
         # parser.add_argument('--train_ps', type=int, default=48,
@@ -45,50 +37,32 @@ class parser_args(TaskDispatcher, name='Uformer'):
         parser.add_argument('--lr', default=1e-4, type=float)  # 1e-4 2e-4 8
         # parser.add_argument('--lr_backbone', default=1e-5, type=float)
         # parser.add_argument('--weight_decay', default=1e-4, type=float)
-        parser.add_argument('-samples_per_gpu', default=6, type=int, #8
-                            metavar='N', help='mini-batch size (default: 256)')
-        parser.add_argument('--print-freq', '-p', default=10, type=int,
-                            metavar='N', help='print frequency (default: 10)')
-        parser.add_argument('--seed', default=1, type=int,
-                            help='seed for initializing training. ')
-        parser.add_argument('--device', default='cuda',
-                            help='device to use for training / testing')
+        parser.add_argument('-samples_per_gpu', default=6, type=int, metavar='N', help='mini-batch size (default: 256)') #8
+        parser.add_argument('--print-freq', '-p', default=10, type=int, metavar='N', help='print frequency (default: 10)')
+        parser.add_argument('--seed', default=1, type=int, help='seed for initializing training. ')
+        parser.add_argument('--device', default='cuda', help='device to use for training / testing')
         parser.add_argument('--epochs', default=1001, type=int)
         parser.add_argument('--workers_per_gpu', default=4, type=int)
-        parser.add_argument('--resume_from',
-                            default=model_path,
-                            type=str, metavar='PATH',
-                            help='path to latest checkpoint (default: none)')
+        parser.add_argument('--resume_from', default=model_path, type=str, metavar='PATH', help='path to latest checkpoint (default: none)')
         parser.add_argument('--accumulated-step', default=1, type=int)
-        parser.add_argument('--clip_max_norm', default=0, type=float,
-                            help='gradient clipping max norm')
+        parser.add_argument('--clip_max_norm', default=0, type=float, help='gradient clipping max norm')
 
-        parser.add_argument('--patch_size', type=int, default=128, #128
-                            help='output patch size')
+        parser.add_argument('--patch_size', type=int, default=128, help='output patch size') #128
         parser.add_argument('--dataset', default={'train': 'Rain100L', 'val': 'Rain100L'}, type=str,
                             choices=[None, 'Rain200L', 'Rain100L', 'Rain200H', 'Rain100H',
                                      'test12', 'real', 'DID', 'SPA', 'DDN'],
                             help="performing evalution for patch2entire")
-        parser.add_argument('--eval', default=False, type=bool,
-                            help="performing evalution for patch2entire")
-        parser.add_argument('--crop_batch_size', type=int, default=32,
-                            help='input batch size for training')
-        parser.add_argument('--rgb_range', type=int, default=255,
-                            help='maximum value of RGB')
+        parser.add_argument('--eval', default=False, type=bool, help="performing evalution for patch2entire")
+        parser.add_argument('--crop_batch_size', type=int, default=32, help='input batch size for training')
+        parser.add_argument('--rgb_range', type=int, default=255, help='maximum value of RGB')
         # SRData
-        parser.add_argument('--model', default='uformer',
-                            help='model name')
-        parser.add_argument('--test_every', type=int, default=1000,
-                            help='do test per every N batches')
-        parser.add_argument('--data_train', type=str, default='RainTrainL',  # DIV2K
-                            help='train dataset name')
-        parser.add_argument('--no_augment', action='store_true',
-                            help='do not use data augmentation')
-        parser.add_argument('--n_colors', type=int, default=3,
-                            help='number of color channels to use')
+        parser.add_argument('--model', default='2', help='model name')
+        parser.add_argument('--test_every', type=int, default=1000, help='do test per every N batches')
+        parser.add_argument('--data_train', type=str, default='RainTrainL', help='train dataset name') # DIV2K
+        parser.add_argument('--no_augment', action='store_true', help='do not use data augmentation')
+        parser.add_argument('--n_colors', type=int, default=3, help='number of color channels to use')
         parser.add_argument('--lr_scheduler', default=False, type=bool)
-        parser.add_argument('--ext', type=str, default='sep',
-                            help='dataset file extension')
+        parser.add_argument('--ext', type=str, default='sep', help='dataset file extension')
 
 
         parser.add_argument('--train_ps', type=int, default=128, help='patch size of training sample')
@@ -132,7 +106,7 @@ class Options():
         parser.add_argument('--lr_initial', type=float, default=0.0005, help='initial learning rate')
         parser.add_argument('--weight_decay', type=float, default=0.02, help='weight decay')
         parser.add_argument('--gpu', type=str, default='0', help='GPUs')
-        parser.add_argument('--arch', type=str, default ='Uformer',  help='archtechture')
+        parser.add_argument('--arch', type=str, default ='Uformer_KAv11',  help='archtechture')
         parser.add_argument('--mode', type=str, default ='deraining',  help='image restoration mode')#denoising
 
         # args for saving

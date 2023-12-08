@@ -45,6 +45,9 @@ Our training framework : [Code](https://github.com/XiaoXiao-Woo/derain)
 * Uformer_KAv7：只使用global kernel
 * Uformer_KAv8：BasicUformerLayer层数没有增加，LeWinTransformerBlock_KA和LeWinTransformerBlock都去除了shift window
 * Uformer_KAv9：基于KAv7，去除了shift window
+* Uformer_KAv10：基于KAv4，去除了SA和SE
+* Uformer_KAv11：基于KAv4，去除了global kernel的se
+* Uformer_KAv12：基于KAv4，去除了移位
 
 **Note**：Restormerv2和Restormerv3的代码应该有问题，在ConvLayer部分权重的维度变换有问题
 
@@ -248,7 +251,7 @@ Our training framework : [Code](https://github.com/XiaoXiao-Woo/derain)
 
 |模型|PSNR|SSIM|Params|FLOPs|
 |-|-|-|-|-|
-|Uformer|38.76|0.97927|20.628M|10.308G|
+|Uformer bs=6|38.67999|0.97879|20.628M|10.308G|
 |Uformer bs=12|37.87080|0.97472|20.628M|10.308G|
 |Uformer_tinypaperv1|38.00910|0.97563|||
 |Uformer_tinypaperv2|38.29627|0.97658|||
@@ -256,6 +259,9 @@ Our training framework : [Code](https://github.com/XiaoXiao-Woo/derain)
 |Uformer_KAv7|38.71809|0.97864|||
 |Uformer_KAv8|38.78743|0.97921|||
 |Uformer_KAv9|38.81705|0.97939|||
+|Uformer_KAv10|38.78690|0.97930|||
+
+
 <!-- |Uformer_tinypaperv1|38.67999|0.97879|||
 |Uformer_tinypaperv2|38.67999|0.97879||| -->
 
