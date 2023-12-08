@@ -16,7 +16,7 @@ class parser_args(TaskDispatcher, name='Uformer_KAv12'):
         script_path = os.path.dirname(os.path.dirname(__file__))
         root_dir = script_path.split('AutoDL')[0]
 
-        model_path = r''
+        model_path = r'results\derain\Rain100L\Uformer_KAv12\Test\model_2023-12-08-12-26-55\1000.pth.tar'
 
         parser = argparse.ArgumentParser(description='PyTorch Training')
 

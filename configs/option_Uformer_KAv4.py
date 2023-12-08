@@ -20,7 +20,7 @@ class parser_args(TaskDispatcher, name='Uformer_KAv4'):
         # model_path = f'results\\derain\\Rain100L\\Uformer_KAv2\\Test\\model_2023-10-10-00-16-47\\1000.pth.tar'
         # model_path = 'results\\derain\\Rain100L\\Uformer_KAv3\\Test\\model_2023-10-17-22-38-20\\1000.pth.tar'
         # model_path = 'results\\derain\\Rain100L\\Uformer_KAv4\\Test\\model_2023-10-21-10-19-38\\2000.pth.tar'
-        model_path = r'results\derain\Rain100H\Uformer_KAv4\Test\model_2023-10-22-01-38-21\1000.pth.tar'
+        model_path = r'results\derain\Rain100L\Uformer_KAv4\Test\model_2023-10-18-16-21-14\1000.pth.tar'
 
         parser = argparse.ArgumentParser(description='PyTorch Training')
 
@@ -52,7 +52,7 @@ class parser_args(TaskDispatcher, name='Uformer_KAv4'):
         parser.add_argument('--clip_max_norm', default=0, type=float, help='gradient clipping max norm')
 
         parser.add_argument('--patch_size', type=int, default=128, help='output patch size') #128
-        parser.add_argument('--dataset', default={'train': 'Rain100H', 'val': 'Rain100H'}, type=str,
+        parser.add_argument('--dataset', default={'train': 'Rain100L', 'val': 'Rain100L'}, type=str,
                             choices=[None, 'Rain200L', 'Rain100L', 'Rain200H', 'Rain100H',
                                      'test12', 'real', 'DID', 'SPA', 'DDN'],
                             help="performing evalution for patch2entire")

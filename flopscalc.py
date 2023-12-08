@@ -1,3 +1,9 @@
+
+from math import sqrt
+
+from fvcore.nn import FlopCountAnalysis, flop_count_table
+
+
 import torch
 import torch.nn as nn
 import torch.utils.checkpoint as checkpoint
@@ -10,8 +16,6 @@ import numpy as np
 import time
 from torch import einsum
 from math import sqrt
-
-from fvcore.nn import FlopCountAnalysis, flop_count_table
 
 
 class ConvBlock(nn.Module):
@@ -306,6 +310,148 @@ class LinearProjection_Concat_kv(nn.Module):
         return flops
 
     #########################################
+
+
+
+
+def ka_window_partition(x, window_size):
+    """
+    input: (B, H*W, C)
+    output: (B, num_windows*C, window_size, window_size)
+    """
+    B, L, C = x.shape
+    H, W = int(sqrt(L)), int(sqrt(L))
+    x = x.reshape(B, H // window_size, window_size, W // window_size, window_size, C)
+    windows = x.permute(0, 1, 3, 5, 2, 4).contiguous().view(B, -1, window_size, window_size)
+    return windows
+
+
+def ka_window_reverse(windows, window_size, H, W):
+    """
+    input: (B, num_windows*C, window_size, window_size)
+    output: (B, H*W, C)
+    """
+    B = windows.shape[0]
+    x = windows.contiguous().view(B, H // window_size, W // window_size, -1, window_size, window_size)
+    x = x.permute(0, 1, 4, 2, 5, 3).contiguous().view(B, H*W, -1)
+    return x
+
+
+class SELayer_KA(nn.Module):
+    def __init__(self, channel):
+        super().__init__()
+        self.se = nn.Sequential(nn.AdaptiveAvgPool2d((1, 1)),
+                                nn.Conv2d(channel, channel // 16 if channel >= 64 else channel, kernel_size=1),
+                                nn.ReLU(),
+                                nn.Conv2d(channel // 16 if channel >= 64 else channel, channel, kernel_size=1),
+                                nn.Sigmoid(), )
+
+    def forward(self, x):
+        channel_weight = self.se(x)
+        x = x * channel_weight
+        return x
+    
+
+class ConvLayer(nn.Module):
+    def __init__(self, dim, win_num, kernel_size=3, stride=1, padding=1):
+        super().__init__()
+
+        self.conv = nn.Conv2d(win_num*dim, win_num*dim, kernel_size=kernel_size, stride=stride, padding=padding, groups=win_num)
+
+    def forward(self, x, kernels=None):
+
+        x = self.conv(x)
+
+        return x, self.conv.weight
+
+class KernelAttention(nn.Module):
+    """
+    第一个分组卷积产生核，然后计算核的自注意力，调整核，第二个分组卷积产生输出，skip connection
+    
+    Args:
+        dim: 输入通道数
+        window_size: 窗口大小
+        num_heads: 注意力头数
+        qkv_bias: 是否使用偏置
+        qk_scale: 缩放因子
+        attn_drop: 注意力dropout
+        proj_drop: 输出dropout
+        ka_window_size: kernel attention window size
+        kernel_size: 卷积核大小
+        stride: 卷积步长
+        padding: 卷积padding
+    """
+
+    def __init__(self, dim, input_resolution, num_heads, ka_win_num=4, kernel_size=3, stride=1, padding=1, qkv_bias=True, qk_scale=None, attn_drop=0., proj_drop=0.):
+        super().__init__()
+
+        self.dim = dim
+        self.input_resolution = input_resolution
+        self.num_heads = num_heads
+        self.win_num = ka_win_num
+        self.stride = stride
+        self.padding = padding
+        self.kernel_size = kernel_size
+
+        self.scale = qk_scale or (dim//num_heads) ** (-0.5)
+        self.window_size = int(input_resolution // sqrt(ka_win_num))
+
+        self.num_layers = self.win_num
+        self.convlayer = ConvLayer(dim, ka_win_num, kernel_size, stride, padding)
+        self.kernel_linear = nn.Conv2d(self.win_num*self.dim, self.dim, kernel_size=1, stride=1, padding=0)
+        self.fusion = nn.Conv2d((self.win_num+1)*self.dim, self.dim, kernel_size=1, stride=1, padding=0)
+
+
+    def forward(self, x):
+        """
+        x: B, L, C
+        """
+        B, L, C = x.shape
+        H, W = self.input_resolution, self.input_resolution
+
+        # x_windows:  bs, win_num*c, wh, ww
+        x_windows = ka_window_partition(x, self.window_size)
+
+        # kernels:  win_num*c, c, k_size, k_size
+        _, kernels = self.convlayer(x_windows)
+
+        # kernels:  c, win_num*c, k_size, k_size
+        kernels = kernels.reshape(self.win_num, self.dim, self.dim, self.kernel_size, self.kernel_size).transpose(0, 1).reshape(self.dim, self.win_num*self.dim, self.kernel_size, self.kernel_size)
+
+
+        ### 生成global_kernel，并与kernels连接在一起
+        # global_kernel:  c, c, k_size, k_size
+        global_kernel = self.kernel_linear(kernels)
+
+        # kernels:  c, (win_num+1)*c, k_size, k_size
+        kernels = torch.cat([kernels, global_kernel], dim=1)
+
+        # kernels:  (win_num+1)*c, c, k_size, k_size
+        kernels = kernels.reshape(self.dim, self.win_num+1, self.dim, self.kernel_size, self.kernel_size).transpose(0, 1).reshape((self.win_num+1)*self.dim, self.dim, self.kernel_size, self.kernel_size)
+
+
+        ### 卷积核与输入特征计算卷积
+        # x:  bs, c, h, w
+        x = x.reshape(B, H, W, C).permute(0, 3, 1, 2)
+
+        # x:  bs, (win_num+1)*c, h, w
+        x = x.repeat(1, self.win_num+1, 1, 1)
+
+        # x:  bs, (win_num+1)*c, h, w
+        x = F.conv2d(x, kernels, stride=self.stride, padding=self.padding, groups=self.win_num+1)
+
+        # x:  bs, c, h, w
+        x = self.fusion(x)
+
+        # x:  bs, h*w, c
+        x = x.permute(0, 2, 3, 1).reshape(B, H*W, C)
+
+        return x
+
+
+
+
+
 
 
 ########### window-based self-attention #############
@@ -641,6 +787,153 @@ class OutputProj(nn.Module):
             flops += H * W * self.out_channel
         print("Output_proj:{%.2f}" % (flops / 1e9))
         return flops
+    
+
+
+#########################################
+########### LeWinTransformer #############
+class LeWinTransformerBlock_KA(nn.Module):
+    def __init__(self, dim, input_resolution, num_heads, window_size=8, shift_size=0,
+                 mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0., drop_path=0.,
+                 act_layer=nn.GELU, norm_layer=nn.LayerNorm, token_projection='linear', token_mlp='leff',
+                 se_layer=False):
+        super().__init__()
+        self.__class__.__name__ = 'SwinTEB'
+        self.dim = dim
+        self.input_resolution = input_resolution
+        self.num_heads = num_heads
+        self.window_size = window_size
+        self.shift_size = shift_size
+        self.mlp_ratio = mlp_ratio
+        self.token_mlp = token_mlp
+        if min(self.input_resolution) <= self.window_size:
+            self.shift_size = 0
+            self.window_size = min(self.input_resolution)
+        assert 0 <= self.shift_size < self.window_size, "shift_size must in 0-window_size"
+
+        self.norm1 = norm_layer(dim//2)
+        self.win_attn = WindowAttention(
+            dim//2, window_size=to_2tuple(self.window_size), num_heads=num_heads//2,
+            qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop,
+            token_projection=token_projection, se_layer=se_layer)
+        
+        self.kernel_attn = KernelAttention(dim//2, input_resolution[0], num_heads=num_heads//2, ka_win_num=16, kernel_size=3, stride=1, padding=1)
+
+        self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
+        self.norm2 = norm_layer(dim)
+        mlp_hidden_dim = int(dim * mlp_ratio)
+        self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer,
+                       drop=drop) if token_mlp == 'ffn' else LeFF(dim, mlp_hidden_dim, act_layer=act_layer, drop=drop)
+
+    def extra_repr(self) -> str:
+        return f"dim={self.dim}, input_resolution={self.input_resolution}, num_heads={self.num_heads}, " \
+               f"window_size={self.window_size}, shift_size={self.shift_size}, mlp_ratio={self.mlp_ratio}"
+
+    def forward(self, x, mask=None):
+        B, L, C = x.shape
+        H = int(math.sqrt(L))
+        W = int(math.sqrt(L))
+
+        shortcut = x
+
+        x_wa, x_ka = x.chunk(2, dim=-1)
+
+        ## Kernel Attention
+        attn_windows_ka = self.kernel_attn(x_ka)
+
+        ## Window Attention
+        ## input mask
+        if mask != None:
+            input_mask = F.interpolate(mask, size=(H, W)).permute(0, 2, 3, 1)
+            input_mask_windows = window_partition(input_mask, self.window_size)  # nW, window_size, window_size, 1
+            attn_mask = input_mask_windows.view(-1, self.window_size * self.window_size)  # nW, window_size*window_size
+            attn_mask = attn_mask.unsqueeze(2) * attn_mask.unsqueeze(1)  # nW, window_size*window_size, window_size*window_size
+            attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-100.0)).masked_fill(attn_mask == 0, float(0.0))
+        else:
+            attn_mask = None
+
+        ## shift mask
+        if self.shift_size > 0:
+            # calculate attention mask for SW-MSA
+            shift_mask = torch.zeros((1, H, W, 1)).type_as(x)
+            h_slices = (slice(0, -self.window_size),
+                        slice(-self.window_size, -self.shift_size),
+                        slice(-self.shift_size, None))
+            w_slices = (slice(0, -self.window_size),
+                        slice(-self.window_size, -self.shift_size),
+                        slice(-self.shift_size, None))
+            cnt = 0
+            for h in h_slices:
+                for w in w_slices:
+                    shift_mask[:, h, w, :] = cnt
+                    cnt += 1
+            shift_mask_windows = window_partition(shift_mask, self.window_size)  # nW, window_size, window_size, 1
+            shift_mask_windows = shift_mask_windows.view(-1, self.window_size * self.window_size)  # nW, window_size*window_size
+            shift_attn_mask = shift_mask_windows.unsqueeze(1) - shift_mask_windows.unsqueeze(
+                2)  # nW, window_size*window_size, window_size*window_size
+            attn_mask = attn_mask or shift_attn_mask
+            attn_mask = attn_mask.masked_fill(shift_attn_mask != 0, float(-100.0))
+
+        
+        x_wa = self.norm1(x_wa)
+        x_wa = x_wa.view(B, H, W, C//2)
+
+        # cyclic shift
+        if self.shift_size > 0:
+            shifted_x_wa = torch.roll(x, shifts=(-self.shift_size, -self.shift_size), dims=(1, 2))
+        else:
+            shifted_x_wa = x_wa
+
+
+        # partition windows
+        x_windows_wa = window_partition(shifted_x_wa, self.window_size)  # nW*B, window_size, window_size, C  N*C/2->C/2
+        x_windows_wa = x_windows_wa.view(-1, self.window_size * self.window_size, C//2)  # nW*B, window_size*window_size, C/2
+
+        # W-MSA/SW-MSA
+        attn_windows_wa = self.win_attn(x_windows_wa, mask=attn_mask)  # nW*B, window_size*window_size, C/2
+
+        # merge windows
+        attn_windows_wa = attn_windows_wa.view(-1, self.window_size, self.window_size, C//2)
+        shifted_x_wa = window_reverse(attn_windows_wa, self.window_size, H, W)  # B H' W' C/2
+
+        # reverse cyclic shift
+        if self.shift_size > 0:
+            x_wa = torch.roll(shifted_x_wa, shifts=(self.shift_size, self.shift_size), dims=(1, 2))
+        else:
+            x_wa = shifted_x_wa
+
+        x_wa = x_wa.view(B, H * W, C//2)
+
+        # concat
+        x = torch.cat([x_wa, attn_windows_ka], dim=-1)
+
+        # FFN
+        x = shortcut + self.drop_path(x)
+        x = x + self.drop_path(self.mlp(self.norm2(x)))
+        del attn_mask
+        return x
+
+    def flops(self):
+        flops = 0
+        H, W = self.input_resolution
+        # norm1
+        flops += self.dim * H * W
+        # W-MSA/SW-MSA
+        flops += self.attn.flops(H, W)
+        # norm2
+        flops += self.dim * H * W
+        # mlp
+        flops += self.mlp.flops(H, W)
+        print("LeWin:{%.2f}" % (flops / 1e9))
+        return flops
+
+
+
+
+
+    
+
+
 
 
 #########################################
@@ -1053,15 +1346,69 @@ class BasicUformerLayer(nn.Module):
         # build blocks
         self.blocks = nn.ModuleList([
             LeWinTransformerBlock(dim=dim, input_resolution=input_resolution,
-                                  num_heads=num_heads, window_size=window_size,
-                                  shift_size=0 if (i % 2 == 0) else window_size // 2,
-                                  mlp_ratio=mlp_ratio,
-                                  qkv_bias=qkv_bias, qk_scale=qk_scale,
-                                  drop=drop, attn_drop=attn_drop,
-                                  drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
-                                  norm_layer=norm_layer, token_projection=token_projection, token_mlp=token_mlp,
-                                  se_layer=se_layer)
+                                num_heads=num_heads, window_size=window_size,
+                                shift_size=0 if (i % 2 == 0) else window_size // 2,
+                                mlp_ratio=mlp_ratio,
+                                qkv_bias=qkv_bias, qk_scale=qk_scale,
+                                drop=drop, attn_drop=attn_drop,
+                                drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
+                                norm_layer=norm_layer, token_projection=token_projection, token_mlp=token_mlp,
+                                se_layer=se_layer)
             for i in range(depth)])
+
+    def extra_repr(self) -> str:
+        return f"dim={self.dim}, input_resolution={self.input_resolution}, depth={self.depth}"
+
+    def forward(self, x, mask=None):
+        for blk in self.blocks:
+            if self.use_checkpoint:
+                x = checkpoint.checkpoint(blk, x)
+            else:
+                x = blk(x, mask)
+        return x
+
+    def flops(self):
+        flops = 0
+        for blk in self.blocks:
+            flops += blk.flops()
+        return flops
+    
+
+#########################################
+########### Basic layer of Uformer ################
+class BasicUformerLayer_KA(nn.Module):
+    def __init__(self, dim, output_dim, input_resolution, depth, num_heads, window_size,
+                 mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0.,
+                 drop_path=0., norm_layer=nn.LayerNorm, use_checkpoint=False,
+                 token_projection='linear', token_mlp='ffn', se_layer=False):
+
+        super().__init__()
+        self.dim = dim
+        self.input_resolution = input_resolution
+        self.depth = depth
+        self.use_checkpoint = use_checkpoint
+        # build blocks
+        self.blocks = nn.ModuleList([
+            LeWinTransformerBlock_KA(dim=dim, input_resolution=input_resolution,
+                                num_heads=num_heads, window_size=window_size,
+                                shift_size=0,
+                                mlp_ratio=mlp_ratio,
+                                qkv_bias=qkv_bias, qk_scale=qk_scale,
+                                drop=drop, attn_drop=attn_drop,
+                                drop_path=drop_path[0] if isinstance(drop_path, list) else drop_path,
+                                norm_layer=norm_layer, token_projection=token_projection, token_mlp=token_mlp,
+                                se_layer=se_layer),
+
+            LeWinTransformerBlock(dim=dim, input_resolution=input_resolution,
+                                num_heads=num_heads, window_size=window_size,
+                                shift_size=window_size // 2,
+                                mlp_ratio=mlp_ratio,
+                                qkv_bias=qkv_bias, qk_scale=qk_scale,
+                                drop=drop, attn_drop=attn_drop,
+                                drop_path=drop_path[1] if isinstance(drop_path, list) else drop_path,
+                                norm_layer=norm_layer, token_projection=token_projection, token_mlp=token_mlp,
+                                se_layer=se_layer)
+                                ])
 
     def extra_repr(self) -> str:
         return f"dim={self.dim}, input_resolution={self.input_resolution}, depth={self.depth}"
@@ -1217,7 +1564,7 @@ class Uformer(nn.Module):
                                                 token_projection=token_projection, token_mlp=token_mlp,
                                                 se_layer=se_layer)
         self.dowsample_0 = dowsample(embed_dim, embed_dim * 2)
-        self.encoderlayer_1 = BasicUformerLayer(dim=embed_dim * 2,
+        self.encoderlayer_1 = BasicUformerLayer_KA(dim=embed_dim * 2,
                                                 output_dim=embed_dim * 2,
                                                 input_resolution=(img_size // 2,
                                                                   img_size // 2),
@@ -1233,7 +1580,7 @@ class Uformer(nn.Module):
                                                 token_projection=token_projection, token_mlp=token_mlp,
                                                 se_layer=se_layer)
         self.dowsample_1 = dowsample(embed_dim * 2, embed_dim * 4)
-        self.encoderlayer_2 = BasicUformerLayer(dim=embed_dim * 4,
+        self.encoderlayer_2 = BasicUformerLayer_KA(dim=embed_dim * 4,
                                                 output_dim=embed_dim * 4,
                                                 input_resolution=(img_size // (2 ** 2),
                                                                   img_size // (2 ** 2)),
@@ -1300,7 +1647,7 @@ class Uformer(nn.Module):
                                                 token_projection=token_projection, token_mlp=token_mlp,
                                                 se_layer=se_layer)
         self.upsample_1 = upsample(embed_dim * 16, embed_dim * 4)
-        self.decoderlayer_1 = BasicUformerLayer(dim=embed_dim * 8,
+        self.decoderlayer_1 = BasicUformerLayer_KA(dim=embed_dim * 8,
                                                 output_dim=embed_dim * 8,
                                                 input_resolution=(img_size // (2 ** 2),
                                                                   img_size // (2 ** 2)),
@@ -1316,7 +1663,7 @@ class Uformer(nn.Module):
                                                 token_projection=token_projection, token_mlp=token_mlp,
                                                 se_layer=se_layer)
         self.upsample_2 = upsample(embed_dim * 8, embed_dim * 2)
-        self.decoderlayer_2 = BasicUformerLayer(dim=embed_dim * 4,
+        self.decoderlayer_2 = BasicUformerLayer_KA(dim=embed_dim * 4,
                                                 output_dim=embed_dim * 4,
                                                 input_resolution=(img_size // 2,
                                                                   img_size // 2),
@@ -1609,7 +1956,7 @@ class Uformer(nn.Module):
 
 
 class Uformer_Cross(nn.Module):
-    def __init__(self, args, img_size=128, in_chans=3,
+    def __init__(self, img_size=128, in_chans=3,
                  embed_dim=32, depths=[2, 2, 2, 2, 2, 2, 2, 2, 2], num_heads=[1, 2, 4, 8, 16, 8, 4, 2, 1],
                  window_size=8, mlp_ratio=4., qkv_bias=True, qk_scale=None,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
@@ -1863,7 +2210,7 @@ class Uformer_Cross(nn.Module):
 
 
 class Uformer_CatCross(nn.Module):
-    def __init__(self, args, img_size=128, in_chans=3,
+    def __init__(self, img_size=128, in_chans=3,
                  embed_dim=32, depths=[2, 2, 2, 2, 2, 2, 2, 2, 2], num_heads=[1, 2, 4, 8, 16, 8, 4, 2, 1],
                  window_size=8, mlp_ratio=4., qkv_bias=True, qk_scale=None,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
@@ -2201,7 +2548,7 @@ class Uformer_CatCross(nn.Module):
 
 ### single-scale Uformer is computationally too costly.
 class Uformer_singlescale(nn.Module):
-    def __init__(self, args, img_size=128, in_chans=3,
+    def __init__(self, img_size=128, in_chans=3,
                  embed_dim=32, depths=[2, 2, 2, 2, 2, 2, 2, 2, 2], num_heads=[1, 2, 4, 8, 16, 16, 8, 4, 2],
                  window_size=8, mlp_ratio=4., qkv_bias=True, qk_scale=None,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,

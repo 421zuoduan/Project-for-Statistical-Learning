@@ -255,13 +255,16 @@ Our training framework : [Code](https://github.com/XiaoXiao-Woo/derain)
 |Uformer bs=12|37.87080|0.97472|20.628M|10.308G|
 |Uformer_tinypaperv1|38.00910|0.97563|||
 |Uformer_tinypaperv2|38.29627|0.97658|||
-|Uformer_KAv5|38.72450|0.97846|||
+|Uformer_KAv4|38.81872|0.97947|24.667M|13.548G|
+|Uformer_KAv5|38.72450|0.97846|24.854M|17.238G|
 |Uformer_KAv7|38.71809|0.97864|||
 |Uformer_KAv8|38.78743|0.97921|||
 |Uformer_KAv9|38.81705|0.97939|||
 |Uformer_KAv10|38.78690|0.97930|||
+|Uformer_KAv11|38.77819|0.97959|||
+|Uformer_KAv12|38.67999|0.97879|||
 
-
+3
 <!-- |Uformer_tinypaperv1|38.67999|0.97879|||
 |Uformer_tinypaperv2|38.67999|0.97879||| -->
 
