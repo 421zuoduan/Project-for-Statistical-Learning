@@ -48,6 +48,7 @@ Our training framework : [Code](https://github.com/XiaoXiao-Woo/derain)
 * Uformer_KAv10：基于KAv4，去除了SA和SE
 * Uformer_KAv11：基于KAv4，去除了global kernel的se
 * Uformer_KAv12：基于KAv4，去除了移位
+* Uformer_KAv13：基于KAv4，普通卷积改为深度可分离卷积
 
 **Note**：Restormerv2和Restormerv3的代码应该有问题，在ConvLayer部分权重的维度变换有问题
 
