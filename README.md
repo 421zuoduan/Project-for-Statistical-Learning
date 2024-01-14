@@ -264,8 +264,9 @@ Our training framework : [Code](https://github.com/XiaoXiao-Woo/derain)
 |Uformer_KAv10|38.78690|0.97930|||
 |Uformer_KAv11|38.77819|0.97959|||
 |Uformer_KAv12|38.67999|0.97879|||
+|Uformer_KAv13|38.75458|0.97909|20.416M|9.82G|
 
-3
+
 <!-- |Uformer_tinypaperv1|38.67999|0.97879|||
 |Uformer_tinypaperv2|38.67999|0.97879||| -->
 

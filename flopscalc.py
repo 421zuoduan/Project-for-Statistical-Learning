@@ -18,6 +18,7 @@ from torch import einsum
 from math import sqrt
 
 
+#########################################
 class ConvBlock(nn.Module):
     def __init__(self, in_channel, out_channel, strides=1):
         super(ConvBlock, self).__init__()
@@ -317,29 +318,29 @@ class LinearProjection_Concat_kv(nn.Module):
 def ka_window_partition(x, window_size):
     """
     input: (B, H*W, C)
-    output: (B, num_windows*C, window_size, window_size)
+    output: (num_windows, B, C, window_size, window_size)
     """
     B, L, C = x.shape
     H, W = int(sqrt(L)), int(sqrt(L))
     x = x.reshape(B, H // window_size, window_size, W // window_size, window_size, C)
-    windows = x.permute(0, 1, 3, 5, 2, 4).contiguous().view(B, -1, window_size, window_size)
+    windows = x.permute(1, 3, 0, 5, 2, 4).contiguous().view(-1, B, C, window_size, window_size)
     return windows
 
 
 def ka_window_reverse(windows, window_size, H, W):
     """
-    input: (B, num_windows*C, window_size, window_size)
+    input: (num_windows, B, C, window_size, window_size)
     output: (B, H*W, C)
     """
-    B = windows.shape[0]
-    x = windows.contiguous().view(B, H // window_size, W // window_size, -1, window_size, window_size)
-    x = x.permute(0, 1, 4, 2, 5, 3).contiguous().view(B, H*W, -1)
+    B = windows.shape[1]
+    x = windows.contiguous().view(H // window_size, W // window_size, B, -1, window_size, window_size)
+    x = x.permute(2, 0, 4, 1, 5, 3).contiguous().view(B, H*W, -1)
     return x
 
 
 class SELayer_KA(nn.Module):
     def __init__(self, channel):
-        super().__init__()
+        super(SELayer_KA, self).__init__()
         self.se = nn.Sequential(nn.AdaptiveAvgPool2d((1, 1)),
                                 nn.Conv2d(channel, channel // 16 if channel >= 64 else channel, kernel_size=1),
                                 nn.ReLU(),
@@ -353,16 +354,20 @@ class SELayer_KA(nn.Module):
     
 
 class ConvLayer(nn.Module):
-    def __init__(self, dim, win_num, kernel_size=3, stride=1, padding=1):
+    def __init__(self, dim, kernel_size=3, stride=1, padding=1):
         super().__init__()
+        self.dim = dim
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.padding = padding
 
-        self.conv = nn.Conv2d(win_num*dim, win_num*dim, kernel_size=kernel_size, stride=stride, padding=padding, groups=win_num)
+        self.conv = nn.Conv2d(dim, dim, kernel_size=kernel_size, stride=stride, padding=padding, groups=dim)
 
     def forward(self, x, kernels=None):
 
         x = self.conv(x)
 
-        return x, self.conv.weight
+        return x, self.conv.weight.view(self.conv.weight.shape[0], self.conv.weight.shape[1], -1).permute(0, 2, 1)
 
 class KernelAttention(nn.Module):
     """
@@ -378,6 +383,7 @@ class KernelAttention(nn.Module):
         proj_drop: 输出dropout
         ka_window_size: kernel attention window size
         kernel_size: 卷积核大小
+        kernel_dim_scale: 卷积核通道数缩放因子, 未使用
         stride: 卷积步长
         padding: 卷积padding
     """
@@ -396,10 +402,26 @@ class KernelAttention(nn.Module):
         self.scale = qk_scale or (dim//num_heads) ** (-0.5)
         self.window_size = int(input_resolution // sqrt(ka_win_num))
 
+        self.norm = nn.LayerNorm(dim)
         self.num_layers = self.win_num
-        self.convlayer = ConvLayer(dim, ka_win_num, kernel_size, stride, padding)
-        self.kernel_linear = nn.Conv2d(self.win_num*self.dim, self.dim, kernel_size=1, stride=1, padding=0)
-        self.fusion = nn.Conv2d((self.win_num+1)*self.dim, self.dim, kernel_size=1, stride=1, padding=0)
+        self.convlayers = nn.ModuleList()
+        # self.selayers = nn.ModuleList()
+        for i_layer in range(self.num_layers):
+            layer = ConvLayer(self.dim, self.kernel_size, stride=stride, padding=padding)
+            self.convlayers.append(layer)
+        # for j_layer in range(self.num_layers):
+        #     layer = SELayer_KA(self.dim)
+        #     self.selayers.append(layer)
+
+        # self.proj_qkv = nn.Linear(self.dim, self.dim*3, bias=qkv_bias)
+        self.kernel_linear = nn.Conv2d(self.win_num, 1, kernel_size=1, stride=1, padding=0)
+        # self.global_kernel_selayer = SELayer_KA(self.dim)
+        self.fusion = nn.Linear(self.dim*2, self.dim)
+
+        # self.attn_drop = nn.Dropout(attn_drop)
+        # self.softmax = nn.Softmax(dim=-1)
+        # self.proj_drop = nn.Dropout(proj_drop)
+        # self.proj_out = nn.Linear(self.dim, self.dim)
 
 
     def forward(self, x):
@@ -409,42 +431,83 @@ class KernelAttention(nn.Module):
         B, L, C = x.shape
         H, W = self.input_resolution, self.input_resolution
 
-        # x_windows:  bs, win_num*c, wh, ww
+        # x_windows:  win_num, bs, c, wh, ww
         x_windows = ka_window_partition(x, self.window_size)
 
-        # kernels:  win_num*c, c, k_size, k_size
-        _, kernels = self.convlayer(x_windows)
 
-        # kernels:  c, win_num*c, k_size, k_size
-        kernels = kernels.reshape(self.win_num, self.dim, self.dim, self.kernel_size, self.kernel_size).transpose(0, 1).reshape(self.dim, self.win_num*self.dim, self.kernel_size, self.kernel_size)
-
-
-        ### 生成global_kernel，并与kernels连接在一起
-        # global_kernel:  c, c, k_size, k_size
-        global_kernel = self.kernel_linear(kernels)
-
-        # kernels:  c, (win_num+1)*c, k_size, k_size
-        kernels = torch.cat([kernels, global_kernel], dim=1)
-
-        # kernels:  (win_num+1)*c, c, k_size, k_size
-        kernels = kernels.reshape(self.dim, self.win_num+1, self.dim, self.kernel_size, self.kernel_size).transpose(0, 1).reshape((self.win_num+1)*self.dim, self.dim, self.kernel_size, self.kernel_size)
+        ### 下面对每个窗口进行卷积并获取卷积核
+        # TODO: 这里如何写成并行运算的方法
+        i = 0
+        kernels = []
+        
+        for convlayer in self.convlayers:
+            # kernel: out_c, k_size**2, in_c
+            _, kernel = convlayer(x_windows[i], kernels=None)
+            kernels.append(kernel)
+            i = i + 1
+        # kernels:  列表中有win_num个 out_c, k_size**2, in_c 的张量
 
 
-        ### 卷积核与输入特征计算卷积
-        # x:  bs, c, h, w
-        x = x.reshape(B, H, W, C).permute(0, 3, 1, 2)
+        ### 下面想要计算所有卷积核间的自注意力
+        # kernels:  out_c, win_num*k_size**2, 1
+        kernels = torch.cat(kernels, 1)
 
-        # x:  bs, (win_num+1)*c, h, w
-        x = x.repeat(1, self.win_num+1, 1, 1)
 
-        # x:  bs, (win_num+1)*c, h, w
-        x = F.conv2d(x, kernels, stride=self.stride, padding=self.padding, groups=self.win_num+1)
+        # TODO check: 此处kernels由win_num*k_size**2拆开，win_num的维度是在k_size前面还是后面
+        # win_num, out_c, 1, k_size, k_size
+        kernels = kernels.reshape(self.dim, self.win_num, self.kernel_size, self.kernel_size, 1).permute(1, 0, 4, 2, 3)
 
-        # x:  bs, c, h, w
-        x = self.fusion(x)
+        ### 下面计算一个全局卷积核，用于与全图卷积
+        # global_kernel: win_num*out_c, 1, k_size, k_size
+        global_kernel = kernels.transpose(0, 1).reshape(self.dim, self.win_num, self.kernel_size, self.kernel_size)
+
+        # global_kernel: out_c, 1, k_size, k_size
+        global_kernel = self.kernel_linear(global_kernel)
+
+        # # global_kernel: out_c, 1, k_size, k_size
+        # global_kernel = self.global_kernel_selayer(global_kernel)
+
+        # x: bs, c, h, w
+        x_global = x.view(B, H, W, C).permute(0, 3, 1, 2)
+
+        # x: bs, c, h, w
+        x_global = F.conv2d(x_global, weight=global_kernel, bias=None, stride=self.stride, padding=self.padding, groups=self.dim)
+
+        # x: bs, h*w, c
+        x_global = x_global.permute(0, 2, 3, 1).reshape(B, H*W, C)
+
+
+        ### 下面计算SELayer输出并重新进行窗口卷积
+        # kernels:  win_num, out_c, in_c, k_size, k_size
+        # x_windows_origin:  win_num, bs, c, wh, ww
+        i = 0
+        x_windows_out = []
+
+
+        for i in range(self.win_num):
+        # for selayer in self.selayers:
+            # # kernel:  out_c, in_c, k_size, k_size
+            # kernel = selayer(kernels[i])
+            # x_window:  bs, c, wh, ww
+            x_window = F.conv2d(x_windows[i], weight=kernels[i], bias=None, stride=self.stride, padding=self.padding, groups=self.dim).unsqueeze(0)
+
+            # TODO check: 此处由1, bs*c, h, w变为1, bs, c, h, w的操作是否正确
+            # x_window:  1, bs, c, wh, ww
+            # x_window = x_window.view(B, self.dim, self.window_size, self.window_size).unsqueeze(0)
+            x_windows_out.append(x_window)
+            i = i + 1
+
+        # x_windows:  win_num, bs, c, wh, ww
+        x_windows = torch.cat(x_windows_out, 0)
 
         # x:  bs, h*w, c
-        x = x.permute(0, 2, 3, 1).reshape(B, H*W, C)
+        x = ka_window_reverse(x_windows, self.window_size, H, W)
+
+        # x:  bs, h*w, 2c
+        x = torch.cat([x, x_global], dim=-1)
+
+        # x:  bs, h*w, c
+        x = self.fusion(x)
 
         return x
 
